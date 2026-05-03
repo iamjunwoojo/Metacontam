@@ -1,0 +1,369 @@
+#!/usr/bin/env python
+# import python libraries
+import os
+from collections import defaultdict
+import argparse
+import sys
+import pickle
+import importlib.resources
+import pandas as pd
+# import dependent libraries
+import numpy as np
+import math
+# import functions from py scripts
+from Metacontam import Running_mash
+from Metacontam import Running_Insrain
+from Metacontam import Running_kraken
+from Metacontam import utils
+from Metacontam import Network_analysis
+from Metacontam import Retreive_genome
+from Metacontam import Alignment
+from Metacontam import Final_prediction
+#from Metacontam.louvain import detect_communities, modularity
+#from Metacontam.louvain.louvain import detect_communities
+#from Metacontam.louvain.modularity import modularity
+import pandas as pd
+
+def main(argv):
+    '''main function'''
+    __version__ = "0.0.1"
+    parser = argparse.ArgumentParser(description=f"{'#'*10} \n---    Metacontam v {__version__}    ---\n {'#'*10}", add_help=False)
+
+
+    # Create groups for required and optional arguments
+    required_args = parser.add_argument_group("Required arguments")
+    optional_args = parser.add_argument_group("Optional arguments")
+    system_args = parser.add_argument_group("System arguments")
+    network_args = parser.add_argument_group("Network arguemnts")
+
+    # Required arguments
+    required_args.add_argument("--metadata", type=str, help="4 Column tsv file (Samplename, Sampletype, R1_read path, R2_read path)", required=True)
+    required_args.add_argument("--output", type=str, help="Metacontam output directory (required)", required=True)
+    required_args.add_argument("--DB", type=str, help="Kraken2 DB directory (required)", required=True)
+    required_args.add_argument("--read-length", type = int, help="For running bracken (required)", required=True)
+
+    # Optional arguments
+    optional_args.add_argument("--dist-matrix", type=str, help="Mash distance matrix (optional)", default=None)
+    optional_args.add_argument("--kraken-report", type=str, help="Kraken report folder ex) SRR123.report, SRR124.report files in folder (optional)", default=None)
+    optional_args.add_argument("--numcore", type=int, default=1,
+                                help="Number of threads (optional, default: 1).")
+    optional_args.add_argument("--bracken-report", type=str, help="Bracken report folder ", default=None)
+
+    optional_args.add_argument("--min-reads", type=int, help="Minimum kraken reads to call species (optional, default: 2)", default=2)
+    optional_args.add_argument("--candidate-genome", type=str, help = "candidate contaminant candidate, if provided skipped fetching genome", default=None)
+    optional_args.add_argument("--bam-dir", type=str, help = "pre made bam files are inside bam.dir, if provided skipped mapping to candidate fasta", default=None)
+    # Network argument
+    network_args.add_argument("--min-cor", type=float, help="correlation coefficient threshold (optional, default: 0.45)", default=0.45)
+
+
+    # System arguments 
+    system_args.add_argument("-h", "--help", action="help", help="Show this help message and exit.")
+    system_args.add_argument('--version', action='version', version='%(prog)s ' + __version__)
+
+
+
+    # Parse arguments
+    args = parser.parse_args(argv)
+
+    # Print arguments for confirmation
+    print(f"Metacontam version  {__version__}")
+    print(f"Distance matrix: {args.dist_matrix}")
+    print(f"Kraken report path : {args.kraken_report}")
+    print(f"Output path: {args.output}")
+    print(f"Kraken2 DB path: {args.DB}")
+    print(f"Numcore: {args.numcore}")
+    print(f"Metadata: {args.metadata}")
+    print(f"Minimum read count : {args.min_reads}")
+#    print(f"Minimum read prevalence : {args.min_preval}")
+    print(f"Minimum correlation coefficient : {args.min_cor}")
+#    print(f"High prevalence taxid threshold : {args.highpreval_thr}")
+    print(f"Read length parameter for bracken : {args.read_length}")
+    print("\n\n\n\n\n")
+
+
+    dist_mat = args.dist_matrix
+    output_dir = args.output
+    kraken_report_dir = args.kraken_report
+    bracken_report_dir = args.bracken_report
+    nthreads = args.numcore
+    metadata =  args.metadata
+    DB = args.DB
+    min_reads = args.min_reads
+    min_cor =  args.min_cor
+    candidate_genome = args.candidate_genome
+    bam_dir = args.bam_dir
+    read_length = args.read_length
+
+
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+
+
+    #parse metadata
+    metadata_parsed=utils.parse_metadata(metadata_path=metadata)
+    meta_data, meta_type = utils.parse_metadata_for_preval(metadata)
+
+   ## Running Kraken
+    print("\n\n ---------- Running Kraken ----------\n")
+    if kraken_report_dir:   # if premade kraken_report direnctory exist
+        Kraken_dir = kraken_report_dir
+        print(f"Received kraken report directory : {kraken_report_dir} \n Skip running kraken2 \n Make count matrix from kraken_report file ...")
+
+    elif not kraken_report_dir: # if premade kraken_report direnctory doesn't exist
+        Kraken_dir = os.path.join(output_dir, "Kraken_dir")
+        if not os.path.exists(Kraken_dir):
+            os.makedirs(Kraken_dir)
+        # Running kraken2
+        Running_kraken.running_kraken(metadata = meta_data, db = DB, outputdir = output_dir, core=nthreads)
+        print("Kraken2 Ended")
+        print("Make count matrix from kraken report_report file ...")
+
+
+
+    #### Running Bracken
+    print("\n\n ---------- Running Bracken ----------\n")
+    Bracken_dir = os.path.join(output_dir, "Bracken_dir")
+    if not os.path.exists(Bracken_dir):
+        os.makedirs(Bracken_dir)
+    if not  bracken_report_dir:
+        Running_kraken.running_Braken(metadata = meta_data, db = DB, kraken_dir = Kraken_dir , bracken_dir = Bracken_dir, core = nthreads , read_length = read_length)
+    elif bracken_report_dir:
+        print(f"Received Bracken report directory : {Bracken_dir} \n Skip running Bracken")
+        Bracken_dir=bracken_report_dir
+
+        ## Black list taxid
+    print("\n\n---------- Get Blacklist species taxid ----------\n")
+    Blacklist_path = importlib.resources.files('Metacontam').joinpath('species_under_blacklist.pkl')
+    with open(Blacklist_path, "rb") as f:
+        Blacklist_taxid = pickle.load(f)
+
+    # make matrix from report file
+    print("\n\n ---------- Make matrix from Bracken report file ----------\n")
+    Total_report_file_path = [os.path.join(Bracken_dir,f'{sample_name}_bracken_species.report') for   sample_name in meta_data]
+
+    kraken_matrix=utils.combine_reports(Total_report_file_path)
+    # Display first few rows and columns of the kraken matrix for a preview
+    print("Preview of Kraken Matrix (first 3 rows and 3 columns):")
+    print(kraken_matrix.iloc[:3, :3])  # Show first 3 rows and 3 columns
+    species_cout, sample_cout =kraken_matrix.shape[1], kraken_matrix.shape[0]
+    print(f"Matrix created  : {sample_cout} Samples, {species_cout} species detected \n\n\n")
+
+    Rscript_path = importlib.resources.files('Metacontam').joinpath('Netcomi.R')
+
+    print("\n\n ---------- Find Best prevalence threshold ----------\n")
+    while True:
+        Best_preval = utils.find_best_threshold( input_df = kraken_matrix, min_reads = min_reads ,blacklist = Blacklist_taxid, Rscript_path= Rscript_path)
+        if Best_preval:
+            break
+        else:
+            min_reads+=1
+
+
+
+
+    print(f" Best prevalence threshold : {Best_preval}")
+    print(f" Best Minimum reads : {min_reads} \n\n")
+    
+    
+
+
+    ##Get abundance
+    print("\n\n---------- Get Abundance ----------\n")
+    utils.get_abundance(output_dir = output_dir, meta_data = meta_data , bracken_dir = bracken_report_dir )
+
+
+
+
+    ##Get  Prevalence
+    print("\n\n---------- Get prevalence ----------\n")
+
+    total_taxid = set(str(t) for t in kraken_matrix.columns)
+    n_samples = len(meta_data)
+    taxid_count = defaultdict(int)
+    bracken_dir_path = bracken_report_dir if bracken_report_dir else os.path.join(output_dir, "Bracken_dir")
+    for sample_id in meta_data:
+        sample_file = os.path.join(bracken_dir_path, f"{sample_id}_bracken_species.report")
+        try:
+            with open(sample_file) as f:
+                for line in f:
+                    parts = line.strip().split('\t')
+                    if parts[4] in total_taxid and int(parts[1]) >= min_reads:
+                        taxid_count[parts[4]] += 1
+        except:
+            pass
+    dict_abc = {t: taxid_count[str(t)] / n_samples for t in kraken_matrix.columns}
+    sorted_dict = dict(sorted(dict_abc.items(), key=lambda item: item[1], reverse=True))
+    sorted_dict={i:l for  i,l in sorted_dict.items() if l>0}
+    # filtered_taxid=list(sorted_dict.keys())[0:100]
+    
+    test_taxid=list(sorted_dict.keys())
+    print(f"Preview of top 10  prevalence ")
+    print("Taxid\tPrevalence")
+    for taxid in test_taxid[0:10]:
+        print(taxid,"\t", sorted_dict[taxid])
+    pd.DataFrame(sorted_dict,index=["preval"]).T.to_csv(os.path.join(output_dir,"Prevalence.txt"),sep="\t")
+    print(f"Prevalence saved : '{output_dir}/Prevalence.txt'")
+    
+
+    
+
+    ## Black list taxid
+    print("\n\n---------- Get Blacklist species taxid ----------\n")
+    Blacklist_path = importlib.resources.files('Metacontam').joinpath('species_under_blacklist.pkl')
+    with open(Blacklist_path, "rb") as f:
+        Blacklist_taxid = pickle.load(f)
+
+
+
+
+
+
+    ## Count Matrix
+    print("\n\n---------- Filtering count matrix ----------\n")
+    print(f"Filtering kraken matrix -> Minimum read : {min_reads}, Minimum prevalence : {Best_preval}")
+    utils.filtering_count_matrix(input_dataframe = kraken_matrix, output = output_dir, min_reads = min_reads, preval_threshold = Best_preval)
+    filtered_matrix_path = os.path.join(output_dir,"kraken_filtered_matrix.txt")
+    print(f"Matrix saved in '{filtered_matrix_path}'")
+
+
+    ## Network 
+    print("\n\n---------- Running Network analysis ----------\n")
+
+
+    Network_dir = os.path.join(output_dir, "Network_Output")
+    if not os.path.exists(Network_dir):
+        os.makedirs(Network_dir)
+    Network_analysis.Make_adjacent_matrix(Rscript_path = Rscript_path , input_file = filtered_matrix_path,output = output_dir, coefficient_threshold = min_cor)
+    
+    
+    Graph = Network_analysis.community_detection(output=output_dir)
+    Blacklist_taxid = [taxid for taxid in Blacklist_taxid if taxid in Graph.nodes]
+    print("Blacklist taxid count : ",len(Blacklist_taxid))
+    Network_analysis.draw_small_communities(G = Graph, high_preval=Blacklist_taxid, output=output_dir)
+    
+    
+    
+
+    partition_path = os.path.join(output_dir, "Network_Output", "partition.pkl")
+    with open(partition_path, "rb") as f:
+        partition_out = pickle.load(f)
+    contam_community=Network_analysis.contam_community(partition = partition_out ,high_preval=Blacklist_taxid)
+    print("Contaminant community taxid count : ",len(contam_community))
+    
+    
+
+    # Fetching genome
+    print("\n\n---------- Retrieve genome from kraken2 db ----------\n")
+    if candidate_genome:
+        print("Candidate genome provided ... Feching genome step skipped")
+    elif not candidate_genome:
+        Genome_dir = os.path.join(output_dir,"Genome_dir")
+        if not os.path.exists(Genome_dir):
+            os.makedirs(Genome_dir)
+
+        not_exist_dict, contaminant_community_taxid = Retreive_genome.find_contaminant_genome(KRAKEN_DB = DB, contaminant_community_taxid = contam_community,output=output_dir)
+        print("Retrieve genome from KRAKEN2 db")
+        Retreive_genome.retreive_genome_from_library(KRAKEN_DB = DB,output_dir = output_dir, not_exist_dict = not_exist_dict, contaminant_community_taxid = contaminant_community_taxid)
+        print(f"Retrieve genome saved in : '{Genome_dir}/Candidate.fasta'")
+
+
+
+
+
+    
+    
+
+    ## Alinging  & genome Feching
+    print("\n\n ------------ Alignment Start ---------- \n")
+    if bam_dir:
+        print("Bam dir provided ... mapping step skipped")
+    elif not bam_dir:
+        print("bowtie2 indexing Candidate.fasta file")
+        Bamfile_dir = os.path.join(output_dir,"Bamfiles")
+        if not os.path.exists(Bamfile_dir):
+            os.makedirs(Bamfile_dir)
+        Alignment.bowtie2_index(output_dir = output_dir)
+        Alignment.mapping(metadata = metadata_parsed, output_dir = output_dir , threads = nthreads)
+        print("Alignment End \n\n\n")
+
+    ## Run mash & stratified sampling
+    print("\n\n---------- Running mash ----------\n")
+    if dist_mat:  # Check if the dist_mat argument is provided
+        print(f"Received dist matrix : {dist_mat} \nSkipped mash \nRunning stratified sampling...")
+        print("Extracting stratified samples...")
+
+        # Load the distance matrix as a DataFrame
+        dist_df = pd.read_csv(dist_mat, sep="\t", index_col=0)
+
+        # Perform stratified sampling
+        pair = Running_mash.bin_based_stratified_sampling(dist_df, num_bins=10, total_samples_pair=1000, seed=None)
+
+        # Convert the resulting list of tuples into a DataFrame
+        pair_df = pd.DataFrame(pair, columns=["sample1", "sample2", "mash_distance"])
+
+        # Save the DataFrame to a TSV file
+        output_path = os.path.join(output_dir, "pair_output.tsv")
+        pair_df.to_csv(output_path, sep="\t", index=False)
+
+        print(f"Saved sampled pairs to {output_path}/pair_output.tsv")
+        print("Mash sampling completed.\n\n\n")
+    else:
+        print("dist_mat argument is missing or None.")
+        print("Running mash")
+        Running_mash.run_mash(meta_data = meta_data, output =  output_dir, THREADS = nthreads, kmer_size=21, min_kmer_copy_num=2, sketch_size=100000)
+        Running_mash.calc_mash_dist(meta_data = meta_data, output =  output_dir)
+
+        # Load the distance matrix as a DataFrame
+        dist_df = pd.read_csv(os.path.join(output_dir,"dist_matrix.txt"), sep="\t", index_col=0)
+
+        # Perform stratified sampling
+        pair = Running_mash.bin_based_stratified_sampling(dist_df, num_bins=10, total_samples_pair=1000, seed=None)
+
+        # Convert the resulting list of tuples into a DataFrame
+        pair_df = pd.DataFrame(pair, columns=["sample1", "sample2", "mash_distance"])
+
+        # Save the DataFrame to a TSV file
+        output_path = os.path.join(output_dir, "pair_output.tsv")
+        pair_df.to_csv(output_path, sep="\t", index=False)
+        print(f"\n Saved sampled pairs to {output_path}/pair_output.tsv")
+        print("Mash sampling completed.\n\n\n")
+
+    # Running Instrain
+    print("\n\n---------- Instrain profile Start----------\n")
+    OutputIS_dir = os.path.join(output_dir, "ISfiles")
+    if not os.path.exists(OutputIS_dir):
+        os.makedirs(OutputIS_dir)
+    Running_Insrain.Instrain_profile(metadata = metadata_parsed, output_dir = output_dir, 
+            output_bam_dir = bam_dir, candidate_fasta = candidate_genome, threads = nthreads)
+    print("Insrain profile End")
+
+
+
+    Running_Insrain.Instrain_compare( output_dir = output_dir, candidate_fasta = candidate_genome, threads = nthreads)
+    print("\n\n---------- Instrain compare Start----------\n")
+    IScompare_dir = os.path.join(output_dir, "IScompare")
+    if not os.path.exists(IScompare_dir):
+        os.makedirs(IScompare_dir)
+    print("Insrain compare End")
+    utils.merging_instrain_compare_output(output = output_dir)
+
+    # Final prediction
+    print("\n\n---------- Final prediction Start----------\n")
+        # Final prediction
+    print("\n\n---------- Final prediction Start----------\n")
+    # -------------------------------
+    Final_prediction.final_prediction(
+        output_dir=output_dir,
+        kraken_db=DB,
+        blacklist_list=Blacklist_taxid,
+        base_percentile=0.6
+    )
+
+
+
+
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
+

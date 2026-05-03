@@ -1,0 +1,17 @@
+name: metacontam
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.10
+  - kraken2>=2.1.3
+  - bracken>=2.8
+  - bowtie2>=2.5
+  - samtools>=1.10
+  - mash>=2.1
+  - r-zcompositions
+  - r-netcomi
+  - pip
+  - pip:
+    - instrain>=1.9.1
