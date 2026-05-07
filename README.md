@@ -68,9 +68,14 @@ metacontam --help
 
 ---
 
-### Option 2 — Install with conda (coming soon)
+### Option 2 — Install with conda
 
-> Conda package is currently under review. We will announce when it becomes available.
+```bash
+conda install -c bioconda -c conda-forge metacontam
+pip install instrain
+```
+
+> **Note**: inStrain must be installed separately via pip due to a dependency conflict.
 
 ---
 
