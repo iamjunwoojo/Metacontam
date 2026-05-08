@@ -24,9 +24,9 @@ Kraken2 → Bracken → Count Matrix → Prevalence Threshold
 
 Metacontam requires a Kraken2 database that includes raw `library.fna` files (needed for genome retrieval) and has `bracken-build` applied before use.
 
-### Option A — Download pre-built database (recommended)
+### Option A — Download pre-built database
 
-We provide a pre-built standard Kraken2 database (built August 2023, includes bacteria, archaea, viral, human, plasmid, and UniVec_Core; Bracken indices for 50/100/125/150 bp read lengths included):
+For users who find building the database difficult, we provide a pre-built standard Kraken2 database (built August 2023, includes bacteria, archaea, viral, human, plasmid, and UniVec_Core; Bracken indices for 50/100/125/150 bp read lengths included):
 
 ```bash
 wget https://pub-3e5157a62ab94e1eb91f43f8fdc5c5f4.r2.dev/kraken2_standard_db_Aug2023.tar
