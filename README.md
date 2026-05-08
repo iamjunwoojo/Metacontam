@@ -22,9 +22,22 @@ Kraken2 → Bracken → Count Matrix → Prevalence Threshold
 
 ## Kraken2 database requirement
 
-Metacontam requires a **self-built** Kraken2 database.  
-Pre-built databases do not include raw `library.fna` files, which are needed for genome retrieval.  
-In addition, `bracken-build` must be run on the database **before** use:
+Metacontam requires a Kraken2 database that includes raw `library.fna` files (needed for genome retrieval) and has `bracken-build` applied before use.
+
+### Option A — Download pre-built database (recommended)
+
+We provide a pre-built standard Kraken2 database (built August 2023, includes bacteria, archaea, viral, human, plasmid, and UniVec_Core; Bracken indices for 50/100/125/150 bp read lengths included):
+
+```bash
+wget https://pub-3e5157a62ab94e1eb91f43f8fdc5c5f4.r2.dev/kraken2_standard_db_Aug2023.tar
+tar -xf kraken2_standard_db_Aug2023.tar
+```
+
+> **Note**: The database is ~284 GB. Make sure you have sufficient disk space before downloading.
+
+---
+
+### Option B — Build your own database
 
 ```bash
 # Build standard Kraken2 DB (bacteria + archaea + viral + human + plasmid + UniVec_Core)
