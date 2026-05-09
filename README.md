@@ -58,9 +58,7 @@ bracken-build -d /path/to/kraken2_db -t 16 -k 35 -l <READ_LENGTH>
 
 ### Option 1 — Install with conda
 
-> **Note**: The bioconda package is currently being updated. Please use Option 2 or 3 in the meantime.
 
-<!--
 ```bash
 conda create -n metacontam python=3.10
 conda activate metacontam
