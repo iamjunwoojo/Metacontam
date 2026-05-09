@@ -26,7 +26,7 @@ Metacontam requires a Kraken2 database that includes raw `library.fna` files (ne
 
 ### Option A — Download pre-built database
 
-For users who find building the database difficult, we provide a pre-built standard Kraken2 database (built August 2023, includes bacteria, archaea, viral, human, plasmid, and UniVec_Core; Bracken indices for 50/100/125/150 bp read lengths included):
+Building the standard Kraken2 database can take many hours and is prone to download errors. We provide a pre-built version (August 2023, includes bacteria, archaea, viral, human, plasmid, and UniVec_Core; Bracken indices for 50/100/125/150 bp read lengths included):
 
 ```bash
 wget https://pub-3e5157a62ab94e1eb91f43f8fdc5c5f4.r2.dev/kraken2_standard_db_Aug2023.tar
@@ -37,7 +37,7 @@ tar -xf kraken2_standard_db_Aug2023.tar
 
 ---
 
-### Option B — Build the latest database yourself
+### Option B — Build the latest database
 
 ```bash
 # Build standard Kraken2 DB (bacteria + archaea + viral + human + plasmid + UniVec_Core)
