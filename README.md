@@ -66,6 +66,8 @@ conda install -c bioconda -c conda-forge metacontam
 pip install instrain
 ```
 
+> **Note**: inStrain is installed separately via pip to avoid conda dependency conflicts.
+
 **Step 2. Verify installation**
 ```bash
 metacontam --help
