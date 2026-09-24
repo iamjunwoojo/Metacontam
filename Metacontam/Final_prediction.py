@@ -28,6 +28,12 @@ def process_df_with_blacklist(df, base_percentile, blacklist):
     bl_species = all_species & blacklist
     bl_ratio = len(bl_species) / len(all_species) if all_species else 0
 
+    # In low-biomass data no pair may clear the acceptance criterion. np.percentile
+    # raises IndexError on an empty array, so catch it here and report the run as
+    # not evaluable instead.
+    if not mean_con_values:
+        return None, None, bl_ratio, None
+
     # Compute effective percentile
     effective_percentile = base_percentile - 0.6 * bl_ratio
 #    if effective_percentile < 0.01:
@@ -45,14 +51,42 @@ def process_df_with_blacklist(df, base_percentile, blacklist):
 def final_prediction(output_dir, kraken_db, blacklist_list, base_percentile=0.6):
     print("\n\n---------- Final prediction Start ----------\n")
     IS_compare_file = os.path.join(output_dir, "merged_IS_compare_Table.tsv")
+
+    # The two cases below are a property of the data, not a bug: in low-biomass
+    # samples there may simply be no pair of samples with enough overlapping
+    # coverage. Rather than dying silently or emitting an unexplained empty
+    # prediction, say what is missing and still write an empty
+    # Final_prediction.txt so that downstream steps do not fail on a missing file.
+    def _write_unevaluated(reason):
+        out_path = os.path.join(output_dir, "Final_prediction.txt")
+        pd.DataFrame(columns=["Taxid", "Mean-Pairwise-ANI",
+                              "contamination_status", "scientific_name"]) \
+          .to_csv(out_path, sep="\t", index=False)
+        print("\n[NOT EVALUABLE] " + reason)
+        print("  No contaminant call was made. An empty Final_prediction.txt was written.")
+        print(f"  Result: {out_path}")
+        print("\n---------- Final prediction End ----------\n")
+
     if not os.path.exists(IS_compare_file):
-        print(f"❌ File not found: {IS_compare_file}")
-        sys.exit(1)
+        _write_unevaluated(
+            f"{IS_compare_file} does not exist, so no strain-level comparison is "
+            "available. inStrain compare produced no output for any sample pair.")
+        return None
 
     IS_compare_df = pd.read_csv(IS_compare_file, sep="\t")
+    if IS_compare_df.empty:
+        _write_unevaluated(f"{IS_compare_file} is empty; inStrain compare returned no rows.")
+        return None
+
     sorted_con, threshold, bl_ratio, effective_percentile = process_df_with_blacklist(
         IS_compare_df, base_percentile, blacklist_list
     )
+    if threshold is None:
+        _write_unevaluated(
+            "No sample pair passed the acceptance criterion (compared_bases_count > 50 "
+            "with a defined conANI), so the ANI threshold is undefined. This is expected "
+            "when coverage is too low for positions to overlap between samples.")
+        return None
 
     Final_predicted_taxa = [i for i, l in sorted_con if l >= threshold]
     print(f'Total species: {len(sorted_con)}')

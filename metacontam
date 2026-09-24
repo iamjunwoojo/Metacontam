@@ -1,6 +1,20 @@
 #!/usr/bin/env python
-# import python libraries
+# Metacontam -- contaminant detection for low-biomass shotgun metagenomes.
+#
+# New in 0.0.2:
+#   --fdr-alpha    BH-FDR on the correlation edges, on by default at 0.1
+#   --zero-method  choice of zero handling before the CLR
+#   the adaptive prevalence filter now aborts instead of looping forever when
+#   no blacklist taxon survives; Bracken failures are distinguished from genuine
+#   non-detection; a run with no evaluable ANI comparison reports "not evaluable"
+#   instead of raising; the min_reads retry cap is gone.
+# Run with --fdr-alpha 0 and the default zero handling to reproduce v0.0.1.
+#
+# Always prefer the Metacontam/ package sitting next to this script, so that an
+# installation of the same name elsewhere cannot shadow it.
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from collections import defaultdict
 import argparse
 import sys
@@ -24,9 +38,27 @@ from Metacontam import Final_prediction
 #from Metacontam.louvain.modularity import modularity
 import pandas as pd
 
+def _zero_spec(args):
+    """Fold the CLI options into the single string Netcomi.R expects.
+
+    The published setting (multRepl with no detection limit) becomes plain
+    "multRepl"; the others carry their value.
+    """
+    if args.zero_method == "multRepl":
+        return "multRepl" if args.zero_dl is None else f"multRepl:{args.zero_dl:g}"
+    if args.zero_method == "bayesMult":
+        return "bayesMult"
+    return f"pseudo:{args.pseudocount:g}"
+
+
+def _zero_spec_label(args):
+    spec = _zero_spec(args)
+    return spec + (" (published default)" if spec == "multRepl" else "")
+
+
 def main(argv):
     '''main function'''
-    __version__ = "0.0.1"
+    __version__ = "0.0.2"
     parser = argparse.ArgumentParser(description=f"{'#'*10} \n---    Metacontam v {__version__}    ---\n {'#'*10}", add_help=False)
 
 
@@ -54,6 +86,28 @@ def main(argv):
     optional_args.add_argument("--bam-dir", type=str, help = "pre made bam files are inside bam.dir, if provided skipped mapping to candidate fasta", default=None)
     # Network argument
     network_args.add_argument("--min-cor", type=float, help="correlation coefficient threshold (optional, default: 0.45)", default=0.45)
+    # Skips the adaptive prevalence search, holding the taxon set fixed, so that
+    # only the network stage differs between two runs.
+    optional_args.add_argument("--filtered-matrix", type=str, default=None,
+                               help="Reuse an existing kraken_filtered_matrix.txt "
+                                    "(skips the adaptive prevalence filter).")
+    # A fixed correlation threshold is statistically permissive at small sample
+    # sizes; the BH-FDR corrects for that. Not applied to the adaptive prevalence
+    # filter (see Netcomi.R).
+    network_args.add_argument("--fdr-alpha", type=float, default=0.1,
+                              help="BH-FDR level for edges passing --min-cor "
+                                   "(default: 0.1; 0 disables).")
+    # multRepl  detection-limit replacement (zeros filled with 0.65*dl)
+    # bayesMult Bayesian-multiplicative; uses no detection limit
+    # pseudo    adds a pseudocount at the count level
+    network_args.add_argument("--zero-method", choices=["multRepl", "bayesMult", "pseudo"],
+                              default="multRepl",
+                              help="Zero handling before the CLR (default: multRepl).")
+    network_args.add_argument("--zero-dl", type=float, default=None,
+                              help="Detection limit for multRepl, as a proportion of the "
+                                   "composition (default: NetCoMi's 1e-3).")
+    network_args.add_argument("--pseudocount", type=float, default=0.5,
+                              help="Pseudocount for --zero-method pseudo (default: 0.5).")
 
 
     # System arguments 
@@ -76,6 +130,9 @@ def main(argv):
     print(f"Minimum read count : {args.min_reads}")
 #    print(f"Minimum read prevalence : {args.min_preval}")
     print(f"Minimum correlation coefficient : {args.min_cor}")
+    print(f"Edge FDR (BH) alpha             : {args.fdr_alpha if args.fdr_alpha else 'off'}")
+    print(f"Zero handling before CLR        : {_zero_spec_label(args)}")
+    print(f"Pre-made filtered matrix        : {args.filtered_matrix if args.filtered_matrix else 'off (adaptive filter in use)'}")
 #    print(f"High prevalence taxid threshold : {args.highpreval_thr}")
     print(f"Read length parameter for bracken : {args.read_length}")
     print("\n\n\n\n\n")
@@ -90,6 +147,9 @@ def main(argv):
     DB = args.DB
     min_reads = args.min_reads
     min_cor =  args.min_cor
+    fdr_alpha = args.fdr_alpha if args.fdr_alpha and args.fdr_alpha > 0 else None
+    zero_spec = _zero_spec(args)
+    filtered_matrix_in = args.filtered_matrix
     candidate_genome = args.candidate_genome
     bam_dir = args.bam_dir
     read_length = args.read_length
@@ -150,13 +210,35 @@ def main(argv):
 
     Rscript_path = importlib.resources.files('Metacontam').joinpath('Netcomi.R')
 
-    print("\n\n ---------- Find Best prevalence threshold ----------\n")
-    while True:
-        Best_preval = utils.find_best_threshold( input_df = kraken_matrix, min_reads = min_reads ,blacklist = Blacklist_taxid, Rscript_path= Rscript_path)
-        if Best_preval:
-            break
-        else:
-            min_reads+=1
+    if filtered_matrix_in:
+        # Skip the adaptive prevalence search.
+        #
+        # Why this exists: the threshold is
+        #     threshold = median_black + round(0.7 * median_corr * 10 / sqrt(n), 2)
+        # and the round(., 2) means that when median_corr sits near a rounding
+        # boundary, a difference in NetCoMi or zCompositions version alone can move
+        # the threshold by one step. Measured on CRC non-TCGA: 0.5357 (316 taxa) as
+        # published versus 0.5714 (272 taxa) on another machine, which dropped 44
+        # species at prevalence 15/28. The FDR effect and the taxon-set difference
+        # would then be confounded. This option pins the taxon set to the published
+        # one so that the FDR is the only thing that varies.
+        print("\n\n ---------- Skip prevalence search (pre-made matrix) ----------\n")
+        print(f"Using: {filtered_matrix_in}")
+        Best_preval = None
+    else:
+        print("\n\n ---------- Find Best prevalence threshold ----------\n")
+        # Raising min_reads and retrying only helps when too many taxa remain.
+        # If no blacklist taxon is present at all, retrying changes nothing, so
+        # stop immediately.
+        while True:
+            try:
+                Best_preval = utils.find_best_threshold( input_df = kraken_matrix, min_reads = min_reads ,blacklist = Blacklist_taxid, Rscript_path= Rscript_path)
+            except utils.NoBlacklistTaxaError as e:
+                print(f"\n[ABORT] {e}")
+                sys.exit(2)
+            if Best_preval:
+                break
+            min_reads += 1
 
 
 
@@ -220,9 +302,17 @@ def main(argv):
 
     ## Count Matrix
     print("\n\n---------- Filtering count matrix ----------\n")
-    print(f"Filtering kraken matrix -> Minimum read : {min_reads}, Minimum prevalence : {Best_preval}")
-    utils.filtering_count_matrix(input_dataframe = kraken_matrix, output = output_dir, min_reads = min_reads, preval_threshold = Best_preval)
     filtered_matrix_path = os.path.join(output_dir,"kraken_filtered_matrix.txt")
+    if filtered_matrix_in:
+        import shutil as _sh
+        _sh.copy(filtered_matrix_in, filtered_matrix_path)
+        with open(filtered_matrix_path) as _fh:
+            _n = len(_fh.readline().rstrip("\n").split("\t")) - 1
+            _t = sum(1 for _ in _fh)
+        print(f"Copied pre-made matrix: {_n} samples, {_t} taxa (prevalence filtering skipped)")
+    else:
+        print(f"Filtering kraken matrix -> Minimum read : {min_reads}, Minimum prevalence : {Best_preval}")
+        utils.filtering_count_matrix(input_dataframe = kraken_matrix, output = output_dir, min_reads = min_reads, preval_threshold = Best_preval)
     print(f"Matrix saved in '{filtered_matrix_path}'")
 
 
@@ -233,7 +323,7 @@ def main(argv):
     Network_dir = os.path.join(output_dir, "Network_Output")
     if not os.path.exists(Network_dir):
         os.makedirs(Network_dir)
-    Network_analysis.Make_adjacent_matrix(Rscript_path = Rscript_path , input_file = filtered_matrix_path,output = output_dir, coefficient_threshold = min_cor)
+    Network_analysis.Make_adjacent_matrix(Rscript_path = Rscript_path , input_file = filtered_matrix_path,output = output_dir, coefficient_threshold = min_cor, fdr_alpha = fdr_alpha, zero_spec = zero_spec)
     
     
     Graph = Network_analysis.community_detection(output=output_dir)

@@ -6,6 +6,15 @@ import glob
 import subprocess
 
 
+class NoBlacklistTaxaError(RuntimeError):
+    """No blacklist taxon survives the filter.
+
+    The adaptive threshold starts from the median prevalence of the blacklist, so
+    it cannot be defined here. Raising min_reads only removes taxa, so retrying
+    can never fix it -- the caller must stop instead of looping.
+    """
+
+
 def parse_metadata(metadata_path):
     metadata_parsed=[]
     with open(metadata_path, 'r') as file:
@@ -253,8 +262,14 @@ def find_best_threshold(input_df, min_reads, blacklist, Rscript_path,
     blacklist = [str(t) for t in blacklist]
     blacklist_in_df = [t for t in blacklist if t in df.index]
     if not blacklist_in_df:
-        print("❌ No blacklist taxa found in data.")
-        return None
+        # Not a retryable condition: raising min_reads only removes taxa, so a
+        # blacklist species can never appear.
+        raise NoBlacklistTaxaError(
+            f"No blacklist taxon is present among the {len(df.index)} taxa that passed "
+            f"min_reads={min_reads}. The adaptive prevalence threshold is derived from "
+            "the blacklist, so it cannot be computed. Check that the blacklist matches "
+            "the taxonomy of the classifier database, or supply --filtered-matrix to "
+            "skip the adaptive filter.")
 
     prevalence_black = prevalence_all.loc[blacklist_in_df]
     top_preval_black = prevalence_black.sort_values(ascending=False).head(top_n)

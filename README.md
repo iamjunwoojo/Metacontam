@@ -1,4 +1,4 @@
-# Metacontam v0.0.1
+# Metacontam v0.0.2
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/metacontam/README.html)
 
 **Metacontam** is a contaminant detection tool for shotgun metagenomic sequencing data.  
@@ -184,6 +184,17 @@ Samplename_B    sampletype_2    /path/to/SampleB_R1.fastq.gz    /path/to/SampleB
 | `--dist-matrix` |  | Pre-computed MASH distance matrix (skips MASH) |
 | `--candidate-genome` |  | Pre-fetched candidate FASTA (skips genome retrieval) |
 | `--bam-dir` |  | Pre-made BAM directory (skips alignment) |
+| `--filtered-matrix` |  | Reuse an existing `kraken_filtered_matrix.txt` (skips the adaptive prevalence filter) |
+
+### Network (new in 0.0.2)
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--fdr-alpha` | 0.1 | Benjamini-Hochberg FDR level applied to the edges that pass `--min-cor`. `0` disables it, reproducing v0.0.1. A fixed correlation threshold is statistically permissive at small sample sizes; the FDR corrects for that. It is **not** applied inside the adaptive prevalence filter, so the taxon set stays independent of the edge rule. |
+| `--zero-method` | `multRepl` | Zero handling before the CLR. `multRepl` replaces zeros using a detection limit, `bayesMult` is Bayesian-multiplicative and uses none, `pseudo` adds a pseudocount at the count level. |
+| `--zero-dl` | NetCoMi's `1e-3` | Detection limit for `multRepl`, as a proportion of the composition. Zeros are filled with `0.65 * dl`. |
+| `--pseudocount` | 0.5 | Pseudocount for `--zero-method pseudo`. |
+
+> On all ten real datasets in the paper (20-344 samples) `--fdr-alpha 0.1` removes **zero** edges, so the published results are unchanged. It only bites at small *n*.
 
 ---
 
@@ -206,6 +217,32 @@ Samplename_B    sampletype_2    /path/to/SampleB_R1.fastq.gz    /path/to/SampleB
 | `IScompare/` | inStrain compare outputs |
 | `merged_IS_compare_Table.tsv` | Merged pairwise ANI comparison table |
 | `Final_prediction.txt` | Final contaminant/non-contaminant classification |
+
+---
+
+## Changelog
+
+### 0.0.2
+
+- **`--fdr-alpha` (default 0.1)** — Benjamini-Hochberg FDR on the correlation
+  edges, on top of `--min-cor`. Pass `0` for v0.0.1 behaviour.
+- **`--zero-method` / `--zero-dl` / `--pseudocount`** — the zero-replacement
+  step before the CLR is now selectable. The default is unchanged from v0.0.1.
+- **`--filtered-matrix`** — reuse an existing filtered matrix to hold the taxon
+  set fixed across runs.
+- **No more infinite loop when the blacklist is empty.** The adaptive prevalence
+  search used to raise `min_reads` and retry forever if no blacklist taxon
+  survived the filter. Raising `min_reads` can only remove taxa, so it now
+  aborts with an explicit message.
+- **Bracken failures are no longer silently treated as "no species detected".**
+  Each sample is recorded in `Bracken_dir/bracken_status.tsv` as `ok`, `empty`
+  (genuine non-detection), `failed_no_report`, or `failed_bracken`, with a
+  summary printed at the end.
+- **Explicit "not evaluable" handling.** A run with no valid ANI comparison, or
+  with no comparison file at all, used to die with an `IndexError` or
+  `ValueError`. Both are normal outcomes for low-biomass data, so the run now
+  says what is missing and writes an empty `Final_prediction.txt`.
+- **The `min_reads` retry cap was removed.**
 
 ---
 

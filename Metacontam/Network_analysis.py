@@ -13,14 +13,27 @@ matplotlib.use('Agg')  # Use non-interactive backend to save figures to file
 
 
 
-def Make_adjacent_matrix(Rscript_path , input_file ,output, coefficient_threshold):
-    input_file = os.path.join(output,"kraken_filtered_matrix.txt")
-    output_file = os.path.join(output,"Network_Output","edge.tsv")
-    threshold = str(coefficient_threshold)
-    subprocess.run(
-        ["Rscript", Rscript_path, input_file, output_file,threshold],
-        check=True
-    )
+def Make_adjacent_matrix(Rscript_path , input_file ,output, coefficient_threshold,
+                         fdr_alpha=None, zero_spec=None):
+    """Build the edge list with NetCoMi.
+
+    fdr_alpha  BH-FDR applied on top of the correlation threshold. None: not applied.
+    zero_spec  zero handling before the CLR: "multRepl" | "multRepl:<dl>" |
+               "bayesMult" | "pseudo:<count>". None keeps the published setting
+               (multRepl with NetCoMi's default dl = 1e-3).
+
+    The two are positional on the R side, so when zero_spec is given without
+    fdr_alpha the fourth argument is passed as an empty string to hold its place.
+    """
+    output_file=os.path.join(output,"Network_Output","edge.tsv")
+    threshold=str(coefficient_threshold)
+    os.makedirs(os.path.dirname(output_file),exist_ok=True)
+    cmd=["Rscript", Rscript_path, input_file, output_file, threshold]
+    if fdr_alpha is not None or zero_spec is not None:
+        cmd.append("" if fdr_alpha is None else str(fdr_alpha))
+    if zero_spec is not None:
+        cmd.append(str(zero_spec))
+    subprocess.run(cmd, check=True)
 
 
 def community_detection(output):
