@@ -79,7 +79,7 @@ if (!is.na(fdr_alpha) && fdr_alpha > 0) {
   pv <- 2 * pt(tt, df = n_samples - 2, lower.tail = FALSE)
 
   ord  <- order(pv)
-  pass <- pv[ord] <= fdr_alpha * seq_along(ord) / m
+  pass <- pv[ord] < fdr_alpha * seq_along(ord) / m
   k    <- if (any(pass)) max(which(pass)) else 0L
 
   keep <- rep(FALSE, length(pv))
